@@ -9,6 +9,8 @@ from app.routers import health, documents, query
 from app.services.document_processor import DocumentProcessor
 from app.services.embeddings import EmbeddingService
 from app.services.vector_store import VectorStore
+from app.services.llm_client import LLMClient
+from app.services.rag_pipeline import RAGPipeline
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -41,6 +43,12 @@ async def lifespan(app: FastAPI):
     app.state.document_processor = DocumentProcessor()
     app.state.embedding_service = EmbeddingService()
     app.state.vector_store = VectorStore()
+    app.state.llm_client = LLMClient()
+    app.state.rag_pipeline = RAGPipeline(
+        embedding_service=app.state.embedding_service,
+        vector_store=app.state.vector_store,
+        llm_client=app.state.llm_client,
+    )
 
     logger.info("All services initialized — ready to accept requests")
     yield
