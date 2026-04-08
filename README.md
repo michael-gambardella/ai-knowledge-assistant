@@ -150,8 +150,8 @@ This project is being built step by step, with each step committed separately to
 | Step | Focus | Status |
 |---|---|---|
 | 1 | Backend foundation — FastAPI, config, health check | ✅ Complete |
-| 2 | Document pipeline — upload, parse, chunk | 🔄 Next |
-| 3 | Embeddings + Vector DB — embed chunks, store and retrieve | ⬜ Planned |
+| 2 | Document pipeline — upload, parse, chunk | ✅ Complete |
+| 3 | Embeddings + Vector DB — embed chunks, store and retrieve | 🔄 Next |
 | 4 | RAG query pipeline — retrieval + LLM generation | ⬜ Planned |
 | 5 | Evaluation layer — latency, relevance scoring, logging | ⬜ Planned |
 | 6 | Frontend — upload UI, chat interface, source citations | ⬜ Planned |

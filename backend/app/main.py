@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import health, documents, query
+from app.services.document_processor import DocumentProcessor
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -25,8 +26,14 @@ async def lifespan(app: FastAPI):
     cheaper than loading them on every request.
     """
     logger.info("Starting AI Knowledge Assistant (env=%s)", settings.app_env)
-    # Future: initialize embedding model, vector DB connection here
+
+    # Initialize the document processor once at startup.
+    # This pre-loads the text splitter so it's not re-created on every upload request.
+    # In Step 3, the embedding model and vector DB connection will also be loaded here.
+    app.state.document_processor = DocumentProcessor()
+
     yield
+
     logger.info("Shutting down AI Knowledge Assistant")
 
 
