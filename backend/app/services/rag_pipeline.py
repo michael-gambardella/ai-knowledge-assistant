@@ -134,10 +134,16 @@ class RAGPipeline:
             for c in chunks
         ]
 
+        mean_relevance = (
+            round(sum(s.relevance_score for s in sources) / len(sources), 4)
+            if sources else 0.0
+        )
+
         return QueryResponse(
             answer=answer,
             sources=sources,
             retrieval_ms=round(retrieval_ms, 1),
             generation_ms=round(generation_ms, 1),
             total_ms=round(total_ms, 1),
+            mean_relevance_score=mean_relevance,
         )

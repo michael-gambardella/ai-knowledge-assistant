@@ -153,8 +153,8 @@ This project is being built step by step, with each step committed separately to
 | 2 | Document pipeline — upload, parse, chunk | ✅ Complete |
 | 3 | Embeddings + Vector DB — embed chunks, store and retrieve | ✅ Complete |
 | 4 | RAG query pipeline — retrieval + LLM generation | ✅ Complete |
-| 5 | Evaluation layer — latency, relevance scoring, logging | 🔄 Next |
-| 6 | Frontend — upload UI, chat interface, source citations | ⬜ Planned |
+| 5 | Evaluation layer — latency, relevance scoring, logging | ✅ Complete |
+| 6 | Frontend — upload UI, chat interface, source citations | 🔄 Next |
 | 7 | Polish — streaming responses, error handling, Docker | ⬜ Planned |
 
 ---

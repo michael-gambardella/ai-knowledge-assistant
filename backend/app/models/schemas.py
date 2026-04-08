@@ -37,6 +37,7 @@ class QueryResponse(BaseModel):
     retrieval_ms: float
     generation_ms: float
     total_ms: float
+    mean_relevance_score: float  # average cosine similarity of retrieved chunks (0.0–1.0)
 
 
 # --- Health schema ---
