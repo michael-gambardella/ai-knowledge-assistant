@@ -4,5 +4,17 @@
     "filename": "test_upload.txt",
     "chunk_count": 2,
     "uploaded_at": "2026-04-08T00:08:53.719450+00:00"
+  },
+  "bf5d39e3-7a5f-490c-bbe7-3c04150e04d6": {
+    "document_id": "bf5d39e3-7a5f-490c-bbe7-3c04150e04d6",
+    "filename": "smoke_test.txt",
+    "chunk_count": 2,
+    "uploaded_at": "2026-04-08T18:24:29.178896+00:00"
+  },
+  "699cd382-7e74-445e-b00e-3f3af4744371": {
+    "document_id": "699cd382-7e74-445e-b00e-3f3af4744371",
+    "filename": "Michael Gambardella Resume 10.pdf",
+    "chunk_count": 11,
+    "uploaded_at": "2026-04-08T18:49:02.410434+00:00"
   }
 }
