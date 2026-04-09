@@ -1,0 +1,10 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+tests/
+chroma_db/
+storage/
+document_registry.json
+.env

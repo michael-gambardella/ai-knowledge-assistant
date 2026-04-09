@@ -28,9 +28,13 @@ WHY NO_ANSWER HANDLING:
   it to respond with a specific phrase when it can't answer from context.
 """
 
+import json
 import logging
 import time
+from typing import AsyncIterator
 
+from app.evaluation.logger import log_query_trace
+from app.evaluation.metrics import compute_retrieval_metrics
 from app.models.schemas import QueryResponse, SourceChunk
 from app.services.embeddings import EmbeddingService
 from app.services.llm_client import LLMClient
@@ -147,3 +151,91 @@ class RAGPipeline:
             total_ms=round(total_ms, 1),
             mean_relevance_score=mean_relevance,
         )
+
+    async def stream(self, question: str, top_k: int) -> AsyncIterator[str]:
+        """
+        Streaming RAG pipeline — yields SSE-formatted JSON strings.
+
+        Event sequence:
+          1. {"type": "sources", "sources": [...], "retrieval_ms": N}
+             Sent immediately after retrieval so the UI can show source citations
+             while the answer is still generating.
+
+          2. {"type": "token", "text": "..."}
+             One event per text token from Claude. The frontend appends these
+             to build the answer progressively.
+
+          3. {"type": "done", "generation_ms": N, "total_ms": N, "mean_relevance_score": N}
+             Signals completion and carries the final latency metrics.
+
+          On error: {"type": "error", "message": "..."}
+
+        Yields:
+            SSE-formatted strings: "data: <json>\\n\\n"
+        """
+        total_start = time.perf_counter()
+
+        try:
+            # --- Stage 1: Retrieval (synchronous, fast) ---
+            retrieval_start = time.perf_counter()
+            query_embedding = self._embedder.embed_one(question)
+            chunks = self._vector_store.search(query_embedding, top_k=top_k)
+            retrieval_ms = round((time.perf_counter() - retrieval_start) * 1000, 1)
+
+            sources = [
+                SourceChunk(
+                    document_id=c.document_id,
+                    filename=c.filename,
+                    content=c.content,
+                    relevance_score=c.relevance_score,
+                    chunk_index=c.chunk_index,
+                )
+                for c in chunks
+            ]
+
+            logger.info("Stream retrieval complete — top_k=%d chunks_found=%d retrieval_ms=%.1f",
+                        top_k, len(chunks), retrieval_ms)
+
+            # Yield sources immediately — client can render them before generation starts
+            yield f"data: {json.dumps({'type': 'sources', 'sources': [s.model_dump() for s in sources], 'retrieval_ms': retrieval_ms})}\n\n"
+
+            # --- Stage 2: Streaming generation ---
+            generation_start = time.perf_counter()
+            answer_parts: list[str] = []
+
+            if not chunks:
+                no_answer = "I don't have enough information in the provided documents to answer this question."
+                answer_parts.append(no_answer)
+                yield f"data: {json.dumps({'type': 'token', 'text': no_answer})}\n\n"
+                logger.warning("Stream: no chunks retrieved — vector store may be empty")
+            else:
+                user_message = _build_user_message(question, chunks)
+                async for token in self._llm.astream_complete(SYSTEM_PROMPT, user_message):
+                    answer_parts.append(token)
+                    yield f"data: {json.dumps({'type': 'token', 'text': token})}\n\n"
+
+            generation_ms = round((time.perf_counter() - generation_start) * 1000, 1)
+            total_ms = round((time.perf_counter() - total_start) * 1000, 1)
+            mean_relevance = (
+                round(sum(s.relevance_score for s in sources) / len(sources), 4)
+                if sources else 0.0
+            )
+
+            logger.info("Stream generation complete — generation_ms=%.1f total_ms=%.1f", generation_ms, total_ms)
+
+            yield f"data: {json.dumps({'type': 'done', 'generation_ms': generation_ms, 'total_ms': total_ms, 'mean_relevance_score': mean_relevance})}\n\n"
+
+            # Emit evaluation trace (same as non-streaming path)
+            answer = "".join(answer_parts)
+            response = QueryResponse(answer=answer, sources=sources, retrieval_ms=retrieval_ms,
+                                     generation_ms=generation_ms, total_ms=total_ms,
+                                     mean_relevance_score=mean_relevance)
+            try:
+                metrics = compute_retrieval_metrics(sources)
+                log_query_trace(question, response, metrics)
+            except Exception:
+                logger.exception("Evaluation error in stream — stream unaffected")
+
+        except Exception as e:
+            logger.exception("RAG stream error for question=%r", question)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"

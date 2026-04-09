@@ -20,6 +20,7 @@ WHY TEMPERATURE = 0:
 """
 
 import logging
+from typing import AsyncIterator
 
 import anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -33,12 +34,19 @@ class LLMClient:
     """
     Thin wrapper around the Anthropic Messages API.
 
-    Initialized once at startup and shared across all requests.
-    The underlying anthropic.Anthropic client manages its own connection pool.
+    Exposes two generation modes:
+      complete()        — waits for the full response (used by /query/)
+      astream_complete() — async generator yielding text tokens as they arrive
+                           (used by /query/stream for real-time UI updates)
+
+    Both share the same model/token/temperature settings. The async client is
+    separate from the sync one because the Anthropic SDK requires different
+    client instances for sync vs async operation.
     """
 
     def __init__(self):
         self._client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self._async_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         logger.info("LLMClient initialized — model=%s max_tokens=%d", settings.llm_model, settings.llm_max_tokens)
 
     @retry(
@@ -70,3 +78,32 @@ class LLMClient:
             messages=[{"role": "user", "content": user_message}],
         )
         return response.content[0].text
+
+    async def astream_complete(self, system_prompt: str, user_message: str) -> AsyncIterator[str]:
+        """
+        Stream a response from Claude, yielding text tokens as they arrive.
+
+        Uses the async Anthropic client so the event loop isn't blocked while
+        waiting for each token. The caller gets the first token in ~200ms instead
+        of waiting 1-2s for the full response — a significant UX improvement.
+
+        Not wrapped with @retry because streaming is stateful: if a retry fires
+        mid-stream the partial response has already been sent to the client.
+        Connection errors before the first token are extremely rare.
+
+        Args:
+            system_prompt: instructions that frame how Claude should behave
+            user_message:  the actual question + context to answer
+
+        Yields:
+            text tokens (strings) as they arrive from the API
+        """
+        async with self._async_client.messages.stream(
+            model=settings.llm_model,
+            max_tokens=settings.llm_max_tokens,
+            temperature=settings.llm_temperature,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+        ) as stream:
+            async for text in stream.text_stream:
+                yield text

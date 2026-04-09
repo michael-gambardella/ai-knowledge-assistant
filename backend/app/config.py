@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_db"
     chroma_collection_name: str = "knowledge_base"
 
+    # Document registry
+    document_registry_path: str = "./document_registry.json"
+
     # Chunking
     chunk_size: int = 500
     chunk_overlap: int = 50

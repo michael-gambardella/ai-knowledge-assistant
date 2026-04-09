@@ -1,0 +1,31 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    env_file: ./backend/.env
+    environment:
+      # Override local-dev defaults to use the mounted storage volume
+      CHROMA_PERSIST_DIR: /app/storage/chroma_db
+      DOCUMENT_REGISTRY_PATH: /app/storage/document_registry.json
+    volumes:
+      # Named volume for persistent data — survives container restarts and rebuilds.
+      # Without this, every 'docker compose up' starts with an empty knowledge base.
+      - backend_storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s  # allow time for embedding model to load
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_storage:

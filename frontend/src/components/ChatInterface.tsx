@@ -1,22 +1,35 @@
 /**
- * ChatInterface — question input and answer display with latency metrics.
+ * ChatInterface — question input and streaming answer display.
  *
- * Keeps a history of (question, response) pairs in local state so the user
- * can scroll back through previous answers. Each entry shows:
- *   - The question
- *   - The answer text
- *   - Latency badges: retrieval_ms, generation_ms, total_ms
- *   - Mean relevance score badge
- *   - Expandable source citations
+ * Uses the /query/stream SSE endpoint so the answer renders token-by-token
+ * instead of appearing all at once after a 1-2s wait. The source citations
+ * appear immediately after retrieval (before generation starts) because the
+ * backend sends a "sources" event before the first "token" event.
+ *
+ * History entry lifecycle:
+ *   1. User submits → entry added with empty answer, streaming=true
+ *   2. "sources" event → sources + retrieval_ms populated
+ *   3. "token" events → answer text builds up character by character
+ *   4. "done" event → generation_ms, total_ms, mean_relevance_score set; streaming=false
+ *   5. "error" event → error message shown, streaming=false
  */
 
 import { useState, useRef, useEffect } from 'react'
-import { queryKnowledgeBase, type QueryResponse } from '../api'
+import { streamQuery, type SourceChunk } from '../api'
 import { SourceCitations } from './SourceCitations'
+import ReactMarkdown from 'react-markdown'
 
 interface HistoryEntry {
+  id: string
   question: string
-  response: QueryResponse
+  answer: string
+  sources: SourceChunk[]
+  retrieval_ms: number
+  generation_ms: number | null  // null until "done" event
+  total_ms: number | null
+  mean_relevance_score: number | null
+  streaming: boolean
+  error: string | null
 }
 
 interface Props {
@@ -49,32 +62,65 @@ function RelevanceBadge({ score }: { score: number }) {
 export function ChatInterface({ hasDocuments }: Props) {
   const [question, setQuestion] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll to latest answer
   useEffect(() => {
-    if (history.length > 0) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history])
+
+  function updateEntry(id: string, patch: Partial<HistoryEntry>) {
+    setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const q = question.trim()
     if (!q || loading) return
 
+    const id = crypto.randomUUID()
+    const entry: HistoryEntry = {
+      id,
+      question: q,
+      answer: '',
+      sources: [],
+      retrieval_ms: 0,
+      generation_ms: null,
+      total_ms: null,
+      mean_relevance_score: null,
+      streaming: true,
+      error: null,
+    }
+
     setLoading(true)
-    setError(null)
     setQuestion('')
+    setHistory((prev) => [...prev, entry])
 
     try {
-      const response = await queryKnowledgeBase(q)
-      setHistory((prev) => [...prev, { question: q, response }])
+      for await (const event of streamQuery(q)) {
+        if (event.type === 'sources') {
+          updateEntry(id, { sources: event.sources, retrieval_ms: event.retrieval_ms })
+        } else if (event.type === 'token') {
+          setHistory((prev) =>
+            prev.map((e) => (e.id === id ? { ...e, answer: e.answer + event.text } : e))
+          )
+        } else if (event.type === 'done') {
+          updateEntry(id, {
+            generation_ms: event.generation_ms,
+            total_ms: event.total_ms,
+            mean_relevance_score: event.mean_relevance_score,
+            streaming: false,
+          })
+        } else if (event.type === 'error') {
+          updateEntry(id, { error: event.message, streaming: false })
+        }
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Query failed')
-      setQuestion(q) // restore so user can retry
+      updateEntry(id, {
+        error: err instanceof Error ? err.message : 'Query failed',
+        streaming: false,
+      })
+      setQuestion(q)
     } finally {
       setLoading(false)
     }
@@ -84,7 +130,7 @@ export function ChatInterface({ hasDocuments }: Props) {
     <div className="flex flex-col h-full">
       {/* Answer history */}
       <div className="flex-1 overflow-y-auto flex flex-col gap-6 pb-4">
-        {history.length === 0 && !loading && (
+        {history.length === 0 && (
           <div className="flex-1 flex items-center justify-center text-center py-16">
             {hasDocuments ? (
               <div>
@@ -100,8 +146,8 @@ export function ChatInterface({ hasDocuments }: Props) {
           </div>
         )}
 
-        {history.map((entry, i) => (
-          <div key={i} className="flex flex-col gap-3">
+        {history.map((entry) => (
+          <div key={entry.id} className="flex flex-col gap-3">
             {/* Question bubble */}
             <div className="self-end max-w-[80%] bg-indigo-600 text-white rounded-2xl rounded-tr-sm px-4 py-2.5">
               <p className="text-sm">{entry.question}</p>
@@ -109,46 +155,41 @@ export function ChatInterface({ hasDocuments }: Props) {
 
             {/* Answer card */}
             <div className="self-start max-w-full bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-              <p className="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
-                {entry.response.answer}
-              </p>
+              {entry.error ? (
+                <p className="text-sm text-red-600">{entry.error}</p>
+              ) : (
+                <>
+                  <div className="text-sm text-gray-800 leading-relaxed prose prose-sm max-w-none">
+                    <ReactMarkdown>{entry.answer}</ReactMarkdown>
+                    {/* Blinking cursor while streaming */}
+                    {entry.streaming && (
+                      <span className="inline-block w-0.5 h-4 bg-indigo-500 ml-0.5 animate-pulse align-middle" />
+                    )}
+                  </div>
 
-              {/* Metrics row */}
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                <LatencyBadge label="retrieval" value={entry.response.retrieval_ms} />
-                <LatencyBadge label="generation" value={entry.response.generation_ms} />
-                <LatencyBadge label="total" value={entry.response.total_ms} />
-                <RelevanceBadge score={entry.response.mean_relevance_score} />
-              </div>
+                  {/* Metrics — only shown once "done" event arrives */}
+                  {!entry.streaming && entry.total_ms !== null && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      <LatencyBadge label="retrieval" value={entry.retrieval_ms} />
+                      <LatencyBadge label="generation" value={entry.generation_ms!} />
+                      <LatencyBadge label="total" value={entry.total_ms} />
+                      <RelevanceBadge score={entry.mean_relevance_score!} />
+                    </div>
+                  )}
 
-              <SourceCitations sources={entry.response.sources} />
+                  {/* Sources — shown as soon as retrieval completes (before generation finishes) */}
+                  <SourceCitations sources={entry.sources} />
+                </>
+              )}
             </div>
           </div>
         ))}
 
-        {/* Loading indicator */}
-        {loading && (
-          <div className="self-start bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-            <div className="flex gap-1 items-center h-5">
-              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-              <span className="w-2 h-2 bg-indigo-400 rounded-full animate-bounce" />
-            </div>
-          </div>
-        )}
-
         <div ref={bottomRef} />
       </div>
 
-      {/* Error */}
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">
-          {error}
-        </p>
-      )}
-
       {/* Input */}
-      <form onSubmit={handleSubmit} className="flex gap-2">
+      <form onSubmit={handleSubmit} className="flex gap-2 mt-2">
         <input
           type="text"
           value={question}
@@ -166,7 +207,7 @@ export function ChatInterface({ hasDocuments }: Props) {
                      hover:bg-indigo-700 transition-colors
                      disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Ask
+          {loading ? '…' : 'Ask'}
         </button>
       </form>
     </div>

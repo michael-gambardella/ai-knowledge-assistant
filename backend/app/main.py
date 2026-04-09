@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.routers import health, documents, query
@@ -63,14 +64,30 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allows the React frontend to call this API during development
+# CORS — allows the React frontend during local dev (Vite) and Docker (nginx on port 80)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite dev server
+    allow_origins=["http://localhost:5173", "http://localhost"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all for any exception that escapes a route handler.
+
+    Without this, FastAPI/uvicorn returns a bare HTML 500 page which the
+    frontend's JSON parsing can't handle. This ensures every error response
+    is a JSON object with a "detail" key, matching the HTTPException format.
+    """
+    logger.exception("Unhandled exception — %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal error occurred. Please try again."},
+    )
 
 # Routers
 app.include_router(health.router)

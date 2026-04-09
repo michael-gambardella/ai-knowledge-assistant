@@ -15,20 +15,27 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
-REGISTRY_PATH = "./document_registry.json"
+
+def _registry_path() -> str:
+    return settings.document_registry_path
 
 
 def _load() -> dict:
-    if not os.path.exists(REGISTRY_PATH):
+    path = _registry_path()
+    if not os.path.exists(path):
         return {}
-    with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def _save(data: dict) -> None:
-    with open(REGISTRY_PATH, "w", encoding="utf-8") as f:
+    path = _registry_path()
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
